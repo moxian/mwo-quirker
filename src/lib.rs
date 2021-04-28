@@ -302,7 +302,7 @@ impl Model {
                 }
             },
         );
-        let request = Request::get("/mechdata_combined.pretty.json")
+        let request = Request::get("mechdata_combined.min.json")
             .body(Nothing)
             .unwrap();
         FetchService::fetch(request, callback).unwrap()
