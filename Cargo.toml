@@ -1,0 +1,27 @@
+[package]
+name = "quirker"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "reparse"
+path = "src/reparse_main.rs"
+
+[dependencies]
+wasm-bindgen = "0.2"
+yew = "0.17"
+anyhow = "1"
+serde = {version ="1", features = ["derive"]}
+serde_json = "1"
+roxmltree = "0.14"
+byteorder = "1"
+libflate = "1.1"
+itertools = "0.10"
+console_error_panic_hook = "0.1.6"
+wasm-logger = "0.2.0"
+log = "0.4"

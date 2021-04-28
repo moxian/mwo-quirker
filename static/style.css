@@ -1,0 +1,14 @@
+table, th, td {
+    border: 1px solid black;
+}
+
+table tr.cant-fit {
+    display: none;
+}
+table.no-unquirked tr.no-quirks {
+    display: none;
+}
+
+input.quirk-filter{
+    width: 40px;
+}
