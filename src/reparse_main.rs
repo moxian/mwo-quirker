@@ -4,22 +4,41 @@ mod pak_archive;
 use itertools::Itertools;
 use std::io::Read;
 
-use mwo_types::{Affiliation, Component, Specialness, Variant, Weapon};
+use mwo_types::{
+    Affiliation, Component, Engine, Equipment, HardpointKind, Specialness, Variant, Weapon,
+};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 type MyMap<K, V> = std::collections::BTreeMap<K, V>;
 
 fn main() {
-    let game_path = Path::new(&std::env::args().nth(1).expect("pls supply path/to/MechWarrior Online/ ")).join("Game");
+    let game_path = Path::new(
+        &std::env::args()
+            .nth(1)
+            .expect("pls supply path/to/MechWarrior Online/ "),
+    )
+    .join("Game");
 
-    let weapons = parse_weapons(&game_path);
+    let equipment = parse_equipment(&game_path);
     let internals = parse_internals(&game_path);
     let variants = parse_mechs(&game_path, &internals);
 
-    let combined = crate::mwo_types::MechdataCombined2 {
+    let mut doorful = std::collections::BTreeSet::new();
+    for var in &variants{
+        for comp in var.components.values(){
+            if comp.has_doors{
+                doorful.insert(var.variant_name.split("-").next().unwrap().to_string());
+            }
+        }
+    }
+    for v in doorful{
+        println!("{}", v);
+    }
+
+    let combined = crate::mwo_types::MechdataCombined {
         mech_variants: variants,
-        weapons: weapons.clone(),
+        equipment,
     };
     let to_write = vec![
         (
@@ -45,7 +64,13 @@ fn main() {
     }
 }
 
-pub(crate) fn parse_weapons(game_path: impl AsRef<Path>) -> Vec<Weapon> {
+fn parse_equipment(game_path: impl AsRef<Path>) -> Equipment {
+    let weapons = parse_weapons(&game_path);
+    let engines = parse_engines(&game_path);
+    Equipment { weapons, engines }
+}
+
+pub fn parse_weapons(game_path: impl AsRef<Path>) -> Vec<Weapon> {
     let arch_path = game_path.as_ref().join(r"GameData.pak");
     let mut archive =
         pak_archive::PakArchive::new(std::fs::File::open(arch_path).unwrap()).unwrap();
@@ -61,11 +86,9 @@ pub(crate) fn parse_weapons(game_path: impl AsRef<Path>) -> Vec<Weapon> {
         if !w.is_element() {
             continue;
         }
-        // println!("{:?}", w);
         assert_eq!(w.tag_name().name(), "Weapon");
 
         let stats = if let Some(f) = w.attribute("InheritFrom") {
-            // println!("inheriting");
             weap_list_elem
                 .children()
                 .find(|w| w.attribute("id") == Some(f))
@@ -77,9 +100,17 @@ pub(crate) fn parse_weapons(game_path: impl AsRef<Path>) -> Vec<Weapon> {
         .find(|c| c.tag_name().name() == "WeaponStats")
         .unwrap();
 
+        fn optionify_str(x: &str) -> Option<String> {
+            match x {
+                "" => None,
+                other => Some(other.into()),
+            }
+        }
+
         let weap = Weapon {
             id: w.attribute("id").unwrap().parse().unwrap(),
             name: w.attribute("name").unwrap().into(),
+            hardpoint_kind: stats.attribute("type").unwrap().parse().unwrap(),
             hardpoint_aliases: w
                 .attribute("HardpointAliases")
                 .unwrap()
@@ -95,6 +126,7 @@ pub(crate) fn parse_weapons(game_path: impl AsRef<Path>) -> Vec<Weapon> {
             tons: stats.attribute("tons").unwrap().parse().unwrap(),
             cooldown: stats.attribute("cooldown").unwrap().parse().unwrap(),
             speed: stats.attribute("speed").unwrap().parse().unwrap(),
+            ammo_type: stats.attribute("ammoType").and_then(|a| optionify_str(a)),
         };
         if ["DropShipLargePulseLaser", "FakeMachineGun"].contains(&weap.name.as_str()) {
             continue;
@@ -103,6 +135,55 @@ pub(crate) fn parse_weapons(game_path: impl AsRef<Path>) -> Vec<Weapon> {
     }
 
     weapons
+}
+
+pub fn parse_engines(game_path: impl AsRef<Path>) -> Vec<Engine> {
+    let arch_path = game_path.as_ref().join(r"GameData.pak");
+    let mut archive =
+        pak_archive::PakArchive::new(std::fs::File::open(arch_path).unwrap()).unwrap();
+    let wep_contents =
+        String::from_utf8(archive.unpack(r"Libs/Items/Modules/Engines.xml")).unwrap();
+    let doc = roxmltree::Document::parse(&wep_contents).unwrap();
+
+    let modlist_elem = doc
+        .root()
+        .children()
+        .filter(|x| x.is_element())
+        .exactly_one()
+        .unwrap();
+    assert_eq!(modlist_elem.tag_name().name(), "ModuleList");
+
+    let mut engines = vec![];
+    for m in modlist_elem.children().filter(|x| x.is_element()) {
+        assert_eq!(m.tag_name().name(), "Module");
+
+        let stats: roxmltree::Node = m
+            .children()
+            .filter(|x| x.tag_name().name() == "EngineStats")
+            .exactly_one()
+            .unwrap();
+        let engine = Engine {
+            id: m.attribute("id").unwrap().parse().unwrap(),
+            name: m.attribute("name").unwrap().into(),
+            factions: m
+                .attribute("faction")
+                .unwrap()
+                .split(",")
+                .map(|faction| match faction {
+                    "Clan" => Affiliation::Clan,
+                    "InnerSphere" => Affiliation::InnerSphere,
+                    other => panic!("{:?}", other),
+                })
+                .collect(),
+            weight: stats.attribute("weight").unwrap().parse().unwrap(),
+            rating: stats.attribute("rating").unwrap().parse().unwrap(),
+            side_slots: stats.attribute("sideSlots").unwrap().parse().unwrap(),
+            heatsinks: stats.attribute("heatsinks").unwrap().parse().unwrap(),
+        };
+        engines.push(engine);
+    }
+
+    engines
 }
 
 struct Internal {
@@ -256,9 +337,14 @@ fn parse_mech_chassis(
 }
 
 #[derive(Debug)]
+struct HardpointDefInner {
+    slot_count: i32,
+    has_doors: bool,
+}
+#[derive(Debug)]
 struct HardpointDefs {
     // hardpoint id -> slot count
-    slot_count: MyMap<i32, i32>,
+    hardpoints: MyMap<i32, HardpointDefInner>,
 }
 
 fn parse_hardpoints_def(contents: &str) -> HardpointDefs {
@@ -271,7 +357,7 @@ fn parse_hardpoints_def(contents: &str) -> HardpointDefs {
         .unwrap();
     assert_eq!(hardpoints_elem.tag_name().name(), "Hardpoints");
 
-    let mut result: MyMap<i32, i32> = Default::default();
+    let mut result: MyMap<i32, HardpointDefInner> = Default::default();
     for hp in hardpoints_elem.children().filter(|x| x.is_element()) {
         match hp.tag_name().name() {
             "Hardpoint" => {}
@@ -288,10 +374,16 @@ fn parse_hardpoints_def(contents: &str) -> HardpointDefs {
             assert_eq!(slot.tag_name().name(), "WeaponSlot");
             amt += 1
         }
-        result.insert(id, amt);
+        result.insert(
+            id,
+            HardpointDefInner {
+                slot_count: amt,
+                has_doors: hp.attribute("WeaponDoorsId").is_some(),
+            },
+        );
     }
 
-    HardpointDefs { slot_count: result }
+    HardpointDefs { hardpoints: result }
 }
 
 fn parse_mech_variant(
@@ -356,16 +448,19 @@ fn parse_mech_variant(
     for comp_elem in complist_elem.children().filter(|x| x.is_element()) {
         assert_eq!(comp_elem.tag_name().name(), "Component");
         let comp_name = comp_elem.attribute("Name").unwrap().to_string();
+        let mut has_doors = false;
         let hardpoint_count: BTreeMap<_, _> = comp_elem
             .children()
             .filter(|x| x.tag_name().name() == "Hardpoint")
             .map(|hp| {
-                (
-                    hp.attribute("ID").unwrap().parse::<i32>().unwrap(),
-                    hp.attribute("Type").unwrap().parse::<u8>().unwrap(),
-                )
+                let id = hp.attribute("ID").unwrap().parse::<i32>().unwrap();
+                let kind_num = hp.attribute("Type").unwrap().parse::<i32>().unwrap();
+                let kind = HardpointKind::from_int(kind_num);
+                if hardpoint_defs.hardpoints[&id].has_doors {
+                    has_doors = true
+                }
+                (kind, hardpoint_defs.hardpoints[&id].slot_count)
             })
-            .map(|(id, typ)| (typ, hardpoint_defs.slot_count[&id]))
             .collect();
         let base_slots: i32 = comp_elem.attribute("Slots").unwrap().parse().unwrap();
         let internal_ids: Vec<i32> = comp_elem
@@ -394,6 +489,7 @@ fn parse_mech_variant(
                 .attribute("CanEquipECM")
                 .map(|x| x.parse::<i32>().unwrap() != 0)
                 .unwrap_or(false),
+            has_doors,
         };
         if comp_name.ends_with("_rear") {
             assert_eq!(comp.base_slots, 0);

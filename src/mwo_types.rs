@@ -1,8 +1,22 @@
 use std::collections::BTreeMap;
 
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct MechdataCombined {
+    pub mech_variants: Vec<Variant>,
+    pub equipment: Equipment,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct Equipment {
+    pub weapons: Vec<Weapon>,
+    pub engines: Vec<Engine>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Weapon {
     pub name: String,
+    pub hardpoint_kind: HardpointKind,
     pub hardpoint_aliases: Vec<String>,
     pub faction: Affiliation,
     pub slots: i32,
@@ -10,6 +24,19 @@ pub struct Weapon {
     pub id: i32,
     pub cooldown: f32,
     pub speed: i32,
+    pub ammo_type: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Debug)]
+pub struct Engine {
+    pub id: i32,
+    pub name: String,
+    pub rating: i32,
+    pub heatsinks: i32,
+    pub weight: f32,
+    pub side_slots: i32,
+    pub factions: Vec<Affiliation>,
 }
 
 #[derive(
@@ -39,7 +66,9 @@ pub enum HSType {
     Single,
     Double,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(
+    Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 #[allow(dead_code)]
 pub enum HardpointKind {
     Ballistic,
@@ -56,6 +85,28 @@ impl HardpointKind {
             HardpointKind::Missile => 2,
             HardpointKind::AMS => 4,
         }
+    }
+    #[allow(dead_code)]
+    pub fn from_int(x: i32) -> Self {
+        match x {
+            0 => HardpointKind::Ballistic,
+            1 => HardpointKind::Energy,
+            2 => HardpointKind::Missile,
+            4 => HardpointKind::AMS,
+            _ => panic!("not a hardpoint kind {:?}", x),
+        }
+    }
+}
+impl std::str::FromStr for HardpointKind {
+    type Err = String; // using Result<_, String> is bad, but eh
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "Ballistic" => HardpointKind::Ballistic,
+            "Energy" => HardpointKind::Energy,
+            "Missile" => HardpointKind::Missile,
+            "AMS" => HardpointKind::AMS,
+            _ => return Err(format!("Unknown hardpoint kind {:?}", s)),
+        })
     }
 }
 
@@ -94,13 +145,7 @@ pub struct Component {
     pub hp: i32,
     pub internal_ids: Vec<i32>,
     // kind -> count
-    pub hardpoint_count: BTreeMap<u8, i32>,
+    pub hardpoint_count: BTreeMap<HardpointKind, i32>,
     pub can_equip_ecm: bool,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MechdataCombined2 {
-    pub weapons: Vec<Weapon>,
-    pub mech_variants: Vec<Variant>,
+    pub has_doors: bool,
 }

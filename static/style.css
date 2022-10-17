@@ -12,3 +12,17 @@ table.no-unquirked tr.no-quirks {
 input.quirk-filter{
     width: 40px;
 }
+input.smol-number{
+    width: 40px;
+}
+
+.weaponlist-available{
+    overflow-y: scroll;
+    height: 100px;
+    /* width: 240px; */
+}
+.weaponlist-chosen {
+    height: 100px;
+    min-width: 100px;
+}
+
